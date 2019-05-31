@@ -61,7 +61,6 @@ class RosAriaNode
     //void cmd_disable_motors_cb();
     void spin();
     void publish();
-    void sonarConnectCb();
     void dynamic_reconfigureCB(rosaria::RosAriaConfig &config, uint32_t level);
     void readParameters();
 
@@ -257,25 +256,6 @@ void RosAriaNode::dynamic_reconfigureCB(rosaria::RosAriaConfig &config, uint32_t
   robot->unlock();
 }
 
-/// Called when another node subscribes or unsubscribes from sonar topic.
-void RosAriaNode::sonarConnectCb()
-{
-  publish_sonar = (sonar_pub.getNumSubscribers() > 0);
-  publish_sonar_pointcloud2 = (sonar_pointcloud2_pub.getNumSubscribers() > 0);
-  robot->lock();
-  if (publish_sonar || publish_sonar_pointcloud2)
-  {
-    robot->enableSonar();
-    sonar_enabled = false;
-  }
-  else if(!publish_sonar && !publish_sonar_pointcloud2)
-  {
-    robot->disableSonar();
-    sonar_enabled = true;
-  }
-  robot->unlock();
-}
-
 RosAriaNode::RosAriaNode(ros::NodeHandle nh) : 
   n(nh),
   serial_port(""), serial_baud(0), 
@@ -316,12 +296,6 @@ RosAriaNode::RosAriaNode(ros::NodeHandle nh) :
   // See ros::NodeHandle API docs.
   pose_pub = n.advertise<nav_msgs::Odometry>("pose",1000);
   bumpers_pub = n.advertise<rosaria::BumperState>("bumper_state",1000);
-  sonar_pub = n.advertise<sensor_msgs::PointCloud>("sonar", 50, 
-      boost::bind(&RosAriaNode::sonarConnectCb, this),
-      boost::bind(&RosAriaNode::sonarConnectCb, this));
-  sonar_pointcloud2_pub = n.advertise<sensor_msgs::PointCloud2>("sonar_pointcloud2", 50,
-      boost::bind(&RosAriaNode::sonarConnectCb, this),
-      boost::bind(&RosAriaNode::sonarConnectCb, this));
 
   voltage_pub = n.advertise<std_msgs::Float64>("battery_voltage", 1000);
   recharge_state_pub = n.advertise<std_msgs::Int8>("battery_recharge_state", 5, true /*latch*/ );
@@ -469,7 +443,7 @@ int RosAriaNode::Setup()
   robot->enableMotors();
 
   // disable sonars on startup
-  robot->disableSonar();
+  robot->enableSonar();
 
   // callback will  be called by ArRobot background processing thread for every SIP data packet received from robot
   robot->addSensorInterpTask("ROSPublishingTask", 100, &myPublishCB);
