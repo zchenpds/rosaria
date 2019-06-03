@@ -29,6 +29,9 @@
 #include "LaserPublisher.h"
 
 #include <sstream>
+#include <utility>
+
+#include "src/ActionMove.h"
 
 
 /** @brief Node that interfaces between ROS and mobile robot base features via ARIA library. 
@@ -98,11 +101,16 @@ class RosAriaNode
     ArRobotConnector *conn;
     ArLaserConnector *laserConnector;
     ArRobot *robot;
+    ArSonarDevice* m_pSonar;
+
     nav_msgs::Odometry position;
     rosaria::BumperState bumpers;
     ArPose pos;
     ArFunctorC<RosAriaNode> myPublishCB;
     //ArRobot::ChargeState batteryCharge;
+
+    std::vector<std::pair<ArAction*, int>> m_vecpArActions;
+    ActionMove * m_pActionMove;
 
     //for odom->base_link transform
     tf::TransformBroadcaster odom_broadcaster;
@@ -259,12 +267,13 @@ void RosAriaNode::dynamic_reconfigureCB(rosaria::RosAriaConfig &config, uint32_t
 RosAriaNode::RosAriaNode(ros::NodeHandle nh) : 
   n(nh),
   serial_port(""), serial_baud(0), 
-  conn(NULL), laserConnector(NULL), robot(NULL),
+  conn(NULL), laserConnector(NULL), robot(NULL), m_pSonar(NULL),
   myPublishCB(this, &RosAriaNode::publish),
   sonar_enabled(false), publish_sonar(false), publish_sonar_pointcloud2(false),
   debug_aria(false), 
   TicksMM(-1), DriftFactor(-99999), RevCount(-1),
-  publish_aria_lasers(false)
+  publish_aria_lasers(false),
+  m_pActionMove(nullptr)
 {
   // read in runtime parameters
 
@@ -318,6 +327,12 @@ RosAriaNode::~RosAriaNode()
   // disable motors and sonar.
   robot->disableMotors();
   robot->disableSonar();
+
+  delete m_pSonar;
+  while (!m_vecpArActions.empty()) {
+		delete m_vecpArActions.back().first;
+		m_vecpArActions.pop_back();
+	}
 
   robot->stopRunning();
   robot->waitForRunExit();
@@ -375,6 +390,10 @@ int RosAriaNode::Setup()
     ROS_ERROR("RosAria: ARIA could not connect to robot! (Check ~port parameter is correct, and permissions on port device, or any errors reported above)");
     return 1;
   }
+
+  m_pSonar = new ArSonarDevice();
+  // Attach sonarDev to the robot so it gets data from it.
+	robot->addRangeDevice(m_pSonar);
 
   if(publish_aria_lasers)
     laserConnector = new ArLaserConnector(argparser, robot, conn);
@@ -442,8 +461,17 @@ int RosAriaNode::Setup()
   // Enable the motors
   robot->enableMotors();
 
-  // disable sonars on startup
+  // enable sonars on startup
   robot->enableSonar();
+
+  m_pActionMove = new ActionMove();
+  m_vecpArActions.push_back(std::make_pair(m_pActionMove, 52));
+  m_vecpArActions.push_back(std::make_pair(new ArActionLimiterForwards(), 60));
+	m_vecpArActions.push_back(std::make_pair(new ArActionLimiterRot(), 60));
+	m_vecpArActions.push_back(std::make_pair(new ArActionLimiterBackwards(), 60));
+	for (auto&& it : m_vecpArActions) {
+		robot->addAction(it.first, it.second);
+	}
 
   // callback will  be called by ArRobot background processing thread for every SIP data packet received from robot
   robot->addSensorInterpTask("ROSPublishingTask", 100, &myPublishCB);
@@ -694,14 +722,18 @@ RosAriaNode::cmdvel_cb( const geometry_msgs::TwistConstPtr &msg)
   veltime = ros::Time::now();
   ROS_INFO( "new speed: [%0.2f,%0.2f](%0.3f)", msg->linear.x*1e3, msg->angular.z, veltime.toSec() );
 
-  robot->lock();
+  /* robot->lock();
   robot->setVel(msg->linear.x*1e3);
   if(robot->hasLatVel())
     robot->setLatVel(msg->linear.y*1e3);
   robot->setRotVel(msg->angular.z*180/M_PI);
-  robot->unlock();
-  ROS_DEBUG("RosAria: sent vels to to aria (time %f): x vel %f mm/s, y vel %f mm/s, ang vel %f deg/s", veltime.toSec(),
-    (double) msg->linear.x * 1e3, (double) msg->linear.y * 1.3, (double) msg->angular.z * 180/M_PI);
+  robot->unlock();*/
+
+  if (m_pActionMove)
+    m_pActionMove->setVels2(msg->linear.x*1e3, msg->angular.z*180/M_PI);
+
+  ROS_DEBUG("RosAria: sent vels to to ActionMove (time %f): v %f mm/s, w %f deg/s", veltime.toSec(),
+    (double) msg->linear.x * 1e3, (double) msg->angular.z * 180/M_PI);
 }
 
 void RosAriaNode::cmdvel_watchdog(const ros::TimerEvent& event)
@@ -709,12 +741,16 @@ void RosAriaNode::cmdvel_watchdog(const ros::TimerEvent& event)
   // stop robot if no cmd_vel message was received for 0.6 seconds
   if (ros::Time::now() - veltime > ros::Duration(0.6))
   {
-    robot->lock();
+    /*robot->lock();
     robot->setVel(0.0);
     if(robot->hasLatVel())
       robot->setLatVel(0.0);
     robot->setRotVel(0.0);
-    robot->unlock();
+    robot->unlock();*/
+
+    if (m_pActionMove)
+      m_pActionMove->setVels2(0.0, 0.0);
+
   }
 }
 

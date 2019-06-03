@@ -1,6 +1,7 @@
 # http://ros.org/doc/groovy/api/catkin/html/user_guide/supposed.html
-cmake_minimum_required(VERSION 2.8.3)
+cmake_minimum_required(VERSION 3.1)
 project(rosaria)
+set (CMAKE_CXX_STANDARD 11)
 # Load catkin and all dependencies required for this package
 # TODO: remove all from COMPONENTS that are not catkin packages.
 find_package(catkin REQUIRED COMPONENTS message_generation roscpp nav_msgs geometry_msgs sensor_msgs tf
@@ -37,7 +38,7 @@ generate_dynamic_reconfigure_options(cfg/RosAria.cfg)
 #target_link_libraries(${PROJECT_NAME} another_library)
 
 find_package(Boost REQUIRED COMPONENTS thread)
-include_directories(${catkin_INCLUDE_DIRS} ${Boost_INCLUDE_DIRS} )
+include_directories(${catkin_INCLUDE_DIRS} ${Boost_INCLUDE_DIRS} src)
 
 find_package(Aria QUIET)
 if(Aria_FOUND)
@@ -55,7 +56,7 @@ else()
 	endif()
 endif()
 
-add_executable(RosAria RosAria.cpp LaserPublisher.cpp)
+add_executable(RosAria RosAria.cpp LaserPublisher.cpp src/ActionMove.cpp)
 add_dependencies(RosAria rosaria_gencfg)
 add_dependencies(RosAria rosaria_gencpp)
 
