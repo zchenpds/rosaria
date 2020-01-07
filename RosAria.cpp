@@ -91,6 +91,10 @@ class RosAriaNode
     bool enable_motors_cb(std_srvs::Empty::Request& request, std_srvs::Empty::Response& response);
     bool disable_motors_cb(std_srvs::Empty::Request& request, std_srvs::Empty::Response& response);
 
+    ros::Time start_time_;
+    ros::Time new_stamp_, prev_stamp_;
+    ros::Time toRosTimestamp(const ArTime &);
+
     ros::Time veltime;
     ros::Timer cmdvel_watchdog_timer;
     ros::Duration cmdvel_timeout;
@@ -543,8 +547,22 @@ void RosAriaNode::publish()
   
   position.header.frame_id = frame_id_odom;
   position.child_frame_id = frame_id_base_link;
-  position.header.stamp = ros::Time::now();
+  // position.header.stamp = ros::Time::now();
+  position.header.stamp = toRosTimestamp(robot->getLastOdometryTime());
   pose_pub.publish(position);
+
+  #if 0
+  // Debug
+  double x = position.pose.pose.position.x, y = position.pose.pose.position.y;
+  static double last_x, last_y;
+  static auto last_stamp = position.header.stamp;
+  static auto first_stamp = position.header.stamp;
+  ROS_WARN_STREAM("Odometry Timestamp: " << (position.header.stamp - first_stamp).toSec() 
+    << "; Linear Velocity: " << hypot(x - last_x, y - last_y) / 0.1);
+  last_x = x;
+  last_y = y;
+  last_stamp = position.header.stamp;
+  #endif
 
   ROS_DEBUG("RosAria: publish: (time %f) pose x: %f, pose y: %f, pose angle: %f; linear vel x: %f, vel y: %f; angular vel z: %f", 
     position.header.stamp.toSec(), 
@@ -557,7 +575,7 @@ void RosAriaNode::publish()
   );
 
   // publishing transform odom->base_link
-  odom_trans.header.stamp = ros::Time::now();
+  odom_trans.header.stamp = position.header.stamp;
   odom_trans.header.frame_id = frame_id_odom;
   odom_trans.child_frame_id = frame_id_base_link;
   
@@ -714,6 +732,30 @@ bool RosAriaNode::disable_motors_cb(std_srvs::Empty::Request& request, std_srvs:
     robot->unlock();
 	// todo could wait and see if motors do become disabled, and send a response with an error flag if not
     return true;
+}
+
+ros::Time RosAriaNode::toRosTimestamp(const ArTime & ar_time)
+{
+  ros::Duration duration_since_robot_startup(ar_time.getSec(), ar_time.getMSec() * 1000 * 1000);
+
+  if (start_time_.isZero())
+  {
+    const ros::Duration transmission_delay(0.05);
+    ROS_WARN_STREAM(
+        "Setting the time base using an ArTime timestamp. "
+        "Assuming the transmission delay to be "
+        << transmission_delay.toSec() * 1000.0 << " ms.");
+    start_time_ = ros::Time::now() - duration_since_robot_startup - transmission_delay;
+  }
+  prev_stamp_ = new_stamp_;
+  new_stamp_ = start_time_ + duration_since_robot_startup;
+  double delta_t = (new_stamp_ - prev_stamp_).toSec();
+  if (delta_t > 0.08 && delta_t < 0.12) {
+    const double smoothing_coefficient = 0.1;
+    new_stamp_ = prev_stamp_ + ros::Duration(0.1 + smoothing_coefficient * (delta_t - 0.1));
+  }
+  
+  return new_stamp_;
 }
 
 void
